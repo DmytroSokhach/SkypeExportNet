@@ -1,4 +1,7 @@
-﻿namespace SkypeExportNet.Console
+﻿using SkypeExportNet.Exporter;
+using SkypeExportNet.Exporter.ReportModel;
+
+namespace SkypeExportNet.Console
 {
     using System;
     using System.Collections.Generic;
@@ -10,23 +13,24 @@
     class Program
     {
         const string forbiddenChars = "\\/:?\"<>|*";
-        bool isForbiddenCharacter(char c)
+        
+        static bool IsForbiddenCharacter(char c)
         {
             return forbiddenChars.Contains(c.ToString());
         }
 
-        static string makeSafeFilename(string input, char replacement)
+        static string MakeSafeFilename(string input, char replacement)
         {
             string result = input;
             foreach (var c in forbiddenChars)
             {
-                result = input.Replace(c, replacement);
+                result = result.Replace(c, replacement);
             }
 
             return result;
         }
 
-        static void Main(string[] args)
+        static int Main(string[] args)
         {
             Console.WriteLine("Skype History Exporter .NET v1.0.0 Stable\n" +
           "\tWEBSITE: [ https://github.com/DmitriySokhach/SkypeExportNet ]\n"); // helps people find updated versions
@@ -37,26 +41,24 @@
             var dbPath = "./main.db";
             var outPath = "./ExportedHistory";
             var contacts = new List<string>();
-            var timeFormat = 2;
-            var timeReference = 0;
+            var timeReference = TimeReference.Local;
 
             options
                 .Add("help|h", "show this help message", h => shouldShowHelp = h != null)
-                .Add("db|i", "path to your Skype profile's main.db. Default: " + dbPath, s => { dbPath = s; })
-                .Add("outpath|o",
-                    "path where all html files will be written; will be created if missing. Default: " +
+                .Add("db|i=", "path to your Skype profile's main.db. Default: " + dbPath, s => { dbPath = s; })
+                .Add("outpath|o=",
+                    "path where all JSON files will be written; will be created if missing. Default: " +
                     "\"./ExportedHistory\"",
                     s => { outPath = s; })
-                .Add("contacts|c", "space-separated list of the SkypeIDs to output; defaults to blank which outputs all contacts",
+                .Add("contacts|c=", "space-separated list of the SkypeIDs to output; defaults to blank which outputs all contacts",
                     s =>
                     {
                         contacts = s.Split(' ').ToList();
                     })
-                .Add("timefmt|t", "format of timestamps in history output; set to \"12h\" for 12-hour clock (default), \"24h\" for a 24-hour clock, \"utc12h\" for UTC-based 12-hour clock, or \"utc24h\" for UTC-based 24-hour clock",
+                .Add("timezome|t=", "timezome of timestamps in JSON output; set to \"local\" for local time, \"utc\" for UTC-based time",
                     s =>
                     {
-                        timeFormat = s.Contains("24") ? 2 : 1;
-                        timeReference = s.Contains("utc") ? 0 : 1;
+                        timeReference = s.Contains("utc") ? TimeReference.UTC : TimeReference.Local;
                     });
 
 
@@ -72,7 +74,7 @@
                 Console.Write("SkypeExporterNet.Console: ");
                 Console.WriteLine(e.Message);
                 Console.WriteLine("Try `SkypeExporterNet.Console --help' for more information.");
-                return;
+                return 1;
             }
 
             if (shouldShowHelp)
@@ -91,16 +93,19 @@
                 if (!File.Exists(dbPath))
                 {
                     Console.WriteLine("\nError: Database " + dbPath + " does not exist at the provided path!\n\n");
+                    return 1;
                 }
                 if (new FileInfo(dbPath).Length == 0)
                 {
                     Console.WriteLine("\nError: Database " + dbPath + " is empty!\n\n");
+                    return 1;
                 }
                 if (Directory.Exists(outPath) && !File.GetAttributes(outPath).HasFlag(FileAttributes.Directory))
                 {
                     Console.WriteLine("\nError: Output path " + outPath + " already exists and is not a directory!\n\n");
+                    return 1;
                 }
-                else if (!Directory.Exists(outPath))
+                if (!Directory.Exists(outPath))
                 {
                     // outPath either exists and is a directory, or doesn't exist.
                     // we must now create the path if missing. will throw an exception on errors such as lack of write permissions.
@@ -110,6 +115,7 @@
             catch (Exception ex)
             {
                 Console.WriteLine("\nError: " + ex.Message + "\n");
+                return 1;
             }
 
             // if they've provided a space-separated list of contacts to output, we need to tokenize it and store the SkypeIDs
@@ -133,50 +139,52 @@
             try
             {
                 // open Skype history database
-                var sp = new SkypeParser(dbPath);
-
-                // display all options (input database, output path, and all names to output (if specified))
-                Console.WriteLine("  DATABASE: [ " + dbPath + " ]\n" // note: no newline prefix (aligns it perfectly with version header)
-                          + "   TIMEFMT: [ \"" + (timeFormat == 1 ? "12h" : "24h") + " " + (timeReference == 0 ? "UTC" : "Local Time") + "\" ]\n"
-                          + "    OUTPUT: [ " + outPath + " ]\n");
-                //if (outputContacts.size() > 0)
-                //{
-                //    Console.WriteLine("  CONTACTS: [ \"");
-                //    for (std::map<string, bool>::const_iterator it(outputContacts.begin()); it != outputContacts.end(); ++it)
-                //    {
-                //        Console.WriteLine((*it).first;
-                //        if (boost::next(it) != outputContacts.end()) { Console.WriteLine("\", \""); } // appended after every element except the last one
-                //    }
-                //    Console.WriteLine("\" ]\n\n");
-                //}
-                //else
+                using (var sp = new SkypeParser(dbPath))
                 {
-                    Console.WriteLine("  CONTACTS: [ \"*\" ]\n\n");
-                }
 
-                // grab a list of all contacts encountered in the database
-                var users = sp.getSkypeUsers();
+                    // display all options (input database, output path, and all names to output (if specified))
+                    Console.WriteLine("  DATABASE: [ " + dbPath + " ]\n" // note: no newline prefix (aligns it perfectly with version header)
+                        + "   TIMEFMT: [ \"" + (timeReference == TimeReference.UTC ? "UTC" : "Local Time") + "\" ]\n"
+                        + "    OUTPUT: [ " + outPath + " ]\n");
+                    //if (outputContacts.size() > 0)
+                    //{
+                    //    Console.WriteLine("  CONTACTS: [ \"");
+                    //    for (std::map<string, bool>::const_iterator it(outputContacts.begin()); it != outputContacts.end(); ++it)
+                    //    {
+                    //        Console.WriteLine((*it).first;
+                    //        if (boost::next(it) != outputContacts.end()) { Console.WriteLine("\", \""); } // appended after every element except the last one
+                    //    }
+                    //    Console.WriteLine("\" ]\n\n");
+                    //}
+                    //else
+                    {
+                        Console.WriteLine("  CONTACTS: [ \"*\" ]\n\n");
+                    }
 
-                // output statistics
-                Console.WriteLine("Found " + users.Count + " contacts in the database...\n\n");
+                    // grab a list of all contacts encountered in the database
+                    var users = sp.GetSkypeUsers();
 
-                // output contacts, skipping some in case the user provided a list of contacts to export
-                Dictionary<string, bool> outputContacts_it = users.ToDictionary(x => x, y => false);
-                foreach (var skypeID in users)
-                {
-                    // skip if we're told to filter contacts
-                    //outputContacts_it = outputContacts.find((*it)); // store iterator here since we'll set it to true after outputting, if contact filters are enabled
-                    //if (outputContacts.size() > 0 && (outputContacts_it == outputContacts.end())) { continue; } // if no filters, it's always false; if filters it's true if the contact is to be skipped
+                    // output statistics
+                    Console.WriteLine("Found " + users.Count + " contacts in the database...\n\n");
 
-                    // construct the final path to the log file for this user
-                    string safeFilename = makeSafeFilename(skypeID, '$'); // replace illegal characters with $ instead; some skype IDs are "live:username", and will become "live$username"
-                    var logPath = outPath + safeFilename + ".skypelog.htm"; // appends the log filename and chooses the appropriate path separator
+                    // output contacts, skipping some in case the user provided a list of contacts to export
+                    Dictionary<string, bool> outputContacts_it = users.ToDictionary(x => x, y => false);
+                    foreach (var skypeID in users)
+                    {
+                        // skip if we're told to filter contacts
+                        //outputContacts_it = outputContacts.find((*it)); // store iterator here since we'll set it to true after outputting, if contact filters are enabled
+                        //if (outputContacts.size() > 0 && (outputContacts_it == outputContacts.end())) { continue; } // if no filters, it's always false; if filters it's true if the contact is to be skipped
 
-                    // output exporting header
-                    Console.WriteLine(" * Exporting: " + skypeID + " (" + sp.getDisplayNameAtTime(skypeID, -1) + ")\n");
-                    Console.WriteLine("   => " + logPath + "\n");
-                    sp.exportUserHistory(skypeID, logPath, timeFormat, timeReference);
-                    //if (outputContacts.size() > 0) { (*outputContacts_it).second = true; } // since filters are enabled and we've come here, we know we've output the person as requested, so mark them as such
+                        // construct the final path to the log file for this user
+                        string safeFilename = MakeSafeFilename(skypeID, '$'); // replace illegal characters with $ instead; some skype IDs are "live:username", and will become "live$username"
+                        var logPath = Path.Combine(outPath, safeFilename + ".skypelog.txt"); // appends the log filename and chooses the appropriate path separator
+
+                        // output exporting header
+                        Console.WriteLine(" * Exporting: " + skypeID + "\n");
+                        Console.WriteLine("   => " + logPath + "\n");
+                        sp.ExportUserHistory(skypeID, logPath, timeReference);
+                        //if (outputContacts.size() > 0) { (*outputContacts_it).second = true; } // since filters are enabled and we've come here, we know we've output the person as requested, so mark them as such
+                    }
                 }
             }
             catch (Exception ex)
@@ -194,7 +202,7 @@
             //}
 
             Console.WriteLine("\nExport finished.\n");
-
+            return 0;
         }
     }
 }
